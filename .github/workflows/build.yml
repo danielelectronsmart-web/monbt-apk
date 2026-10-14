@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Préparer les fichiers (index.html à la racine suffit)
@@ -118,6 +118,49 @@ jobs:
           # Autoriser la caméra (photos du cours) et le micro
           sed -i 's#</manifest>#    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />\n</manifest>#' android/app/src/main/AndroidManifest.xml
           npx cap sync android
+      - name: Icône et écran de démarrage de l'appli
+        continue-on-error: true
+        shell: bash
+        run: |
+          cat > brand.js <<'BRANDJS'
+          /* Icône et écran de démarrage de l'appli : Android (icônes + démarrage) et Windows (icône) */
+          const fs=require('fs'),path=require('path');
+          let Resvg;try{Resvg=require('./brandtool/node_modules/@resvg/resvg-js').Resvg}catch(e){Resvg=require('@resvg/resvg-js').Resvg}
+          const VOLT=`<path d="M36 104h48v8a8 8 0 0 1-8 8H44a8 8 0 0 1-8-8z" fill="#0E4A36"/><path d="M62 106l-7 9h5l-2 7 9-10h-5z" fill="#E8891C"/><path d="M22 70a38 38 0 0 1 76 0" fill="none" stroke="#E8891C" stroke-width="5" stroke-linecap="round"/><rect x="9" y="60" width="13" height="26" rx="6" fill="#E8891C"/><rect x="98" y="60" width="13" height="26" rx="6" fill="#E8891C"/><rect x="20" y="36" width="80" height="68" rx="24" fill="#0E4A36"/><rect x="29" y="46" width="62" height="52" rx="18" fill="#F2FAF5"/><line x1="60" y1="36" x2="60" y2="19" stroke="#0E4A36" stroke-width="4" stroke-linecap="round"/><circle cx="60" cy="15" r="6" fill="#E8891C"/><circle cx="60" cy="15" r="10" fill="#E8891C" opacity=".22"/><circle cx="46" cy="66" r="6.5" fill="#12332A"/><circle cx="74" cy="66" r="6.5" fill="#12332A"/><circle cx="48.2" cy="63.8" r="2.2" fill="#fff"/><circle cx="76.2" cy="63.8" r="2.2" fill="#fff"/><circle cx="36" cy="78" r="4.5" fill="#F29BA8" opacity=".55"/><circle cx="84" cy="78" r="4.5" fill="#F29BA8" opacity=".55"/><path d="M51 80q9 8 18 0" fill="none" stroke="#12332A" stroke-width="3.2" stroke-linecap="round"/>`;
+          const BG='#FFF1DC';
+          const volt=(x,y,w)=>`<svg x="${x}" y="${y}" width="${w}" height="${Math.round(w*124/120)}" viewBox="0 0 120 124">${VOLT}</svg>`;
+          const sq=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><rect width="512" height="512" fill="${BG}"/><circle cx="256" cy="256" r="236" fill="#FFE2B8"/>${volt(86,72,340)}</svg>`;
+          const round=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><circle cx="256" cy="256" r="256" fill="${BG}"/><circle cx="256" cy="256" r="236" fill="#FFE2B8"/>${volt(86,72,340)}</svg>`;
+          const fg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">${volt(23,22,62)}</svg>`;
+          const splash=(w,h)=>{const k=Math.round(Math.min(w,h)*0.42);return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="${BG}"/>${volt(Math.round((w-k)/2),Math.round((h-k*1.033)/2),k)}</svg>`};
+          const png=(svg,w)=>new Resvg(svg,{fitTo:{mode:'width',value:w}}).render().asPng();
+          const target=process.argv[2];
+          if(target==='windows'){
+            fs.mkdirSync('build',{recursive:true});fs.writeFileSync('build/icon.png',png(sq,512));
+            console.log('Icône Windows créée : build/icon.png');
+          }else if(target==='android'){
+            const RES='android/app/src/main/res';
+            if(!fs.existsSync(RES)){console.log('Projet Android introuvable : rien à faire');process.exit(0)}
+            const D={mdpi:[48,108],hdpi:[72,162],xhdpi:[96,216],xxhdpi:[144,324],xxxhdpi:[192,432]};
+            let icons=0;
+            for(const [d,[s,f]] of Object.entries(D)){
+              const dir=path.join(RES,'mipmap-'+d);if(!fs.existsSync(dir))continue;
+              fs.writeFileSync(path.join(dir,'ic_launcher.png'),png(sq,s));
+              fs.writeFileSync(path.join(dir,'ic_launcher_round.png'),png(round,s));
+              fs.writeFileSync(path.join(dir,'ic_launcher_foreground.png'),png(fg,f));icons++}
+            const bg=path.join(RES,'values/ic_launcher_background.xml');
+            if(fs.existsSync(bg))fs.writeFileSync(bg,fs.readFileSync(bg,'utf8').replace(/#[0-9A-Fa-f]{6}/,BG));
+            let n=0;
+            for(const dir of fs.readdirSync(RES)){
+              if(!/^drawable/.test(dir))continue;const f=path.join(RES,dir,'splash.png');if(!fs.existsSync(f))continue;
+              const b=fs.readFileSync(f),w=b.readUInt32BE(16),h=b.readUInt32BE(20);
+              if(!(w>0&&h>0&&w<5000&&h<5000))continue;
+              fs.writeFileSync(f,new Resvg(splash(w,h)).render().asPng());n++}
+            console.log('Android : '+icons+' séries d\'icônes et '+n+' écrans de démarrage remplacés');
+          }else{console.log('usage : node brand.js android|windows')}
+          BRANDJS
+          npm install --prefix brandtool --no-save --no-package-lock --legacy-peer-deps @resvg/resvg-js
+          node brand.js android
       - name: Signature fixe + numéro de version (permet d'installer les mises à jour par-dessus sans perdre les données)
         run: |
           mkdir -p ~/.android
@@ -240,6 +283,49 @@ jobs:
           node-version: 22
       - name: Installer Electron
         run: npm install
+      - name: Icône de l'appli Windows
+        continue-on-error: true
+        shell: bash
+        run: |
+          cat > brand.js <<'BRANDJS'
+          /* Icône et écran de démarrage de l'appli : Android (icônes + démarrage) et Windows (icône) */
+          const fs=require('fs'),path=require('path');
+          let Resvg;try{Resvg=require('./brandtool/node_modules/@resvg/resvg-js').Resvg}catch(e){Resvg=require('@resvg/resvg-js').Resvg}
+          const VOLT=`<path d="M36 104h48v8a8 8 0 0 1-8 8H44a8 8 0 0 1-8-8z" fill="#0E4A36"/><path d="M62 106l-7 9h5l-2 7 9-10h-5z" fill="#E8891C"/><path d="M22 70a38 38 0 0 1 76 0" fill="none" stroke="#E8891C" stroke-width="5" stroke-linecap="round"/><rect x="9" y="60" width="13" height="26" rx="6" fill="#E8891C"/><rect x="98" y="60" width="13" height="26" rx="6" fill="#E8891C"/><rect x="20" y="36" width="80" height="68" rx="24" fill="#0E4A36"/><rect x="29" y="46" width="62" height="52" rx="18" fill="#F2FAF5"/><line x1="60" y1="36" x2="60" y2="19" stroke="#0E4A36" stroke-width="4" stroke-linecap="round"/><circle cx="60" cy="15" r="6" fill="#E8891C"/><circle cx="60" cy="15" r="10" fill="#E8891C" opacity=".22"/><circle cx="46" cy="66" r="6.5" fill="#12332A"/><circle cx="74" cy="66" r="6.5" fill="#12332A"/><circle cx="48.2" cy="63.8" r="2.2" fill="#fff"/><circle cx="76.2" cy="63.8" r="2.2" fill="#fff"/><circle cx="36" cy="78" r="4.5" fill="#F29BA8" opacity=".55"/><circle cx="84" cy="78" r="4.5" fill="#F29BA8" opacity=".55"/><path d="M51 80q9 8 18 0" fill="none" stroke="#12332A" stroke-width="3.2" stroke-linecap="round"/>`;
+          const BG='#FFF1DC';
+          const volt=(x,y,w)=>`<svg x="${x}" y="${y}" width="${w}" height="${Math.round(w*124/120)}" viewBox="0 0 120 124">${VOLT}</svg>`;
+          const sq=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><rect width="512" height="512" fill="${BG}"/><circle cx="256" cy="256" r="236" fill="#FFE2B8"/>${volt(86,72,340)}</svg>`;
+          const round=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><circle cx="256" cy="256" r="256" fill="${BG}"/><circle cx="256" cy="256" r="236" fill="#FFE2B8"/>${volt(86,72,340)}</svg>`;
+          const fg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">${volt(23,22,62)}</svg>`;
+          const splash=(w,h)=>{const k=Math.round(Math.min(w,h)*0.42);return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="${BG}"/>${volt(Math.round((w-k)/2),Math.round((h-k*1.033)/2),k)}</svg>`};
+          const png=(svg,w)=>new Resvg(svg,{fitTo:{mode:'width',value:w}}).render().asPng();
+          const target=process.argv[2];
+          if(target==='windows'){
+            fs.mkdirSync('build',{recursive:true});fs.writeFileSync('build/icon.png',png(sq,512));
+            console.log('Icône Windows créée : build/icon.png');
+          }else if(target==='android'){
+            const RES='android/app/src/main/res';
+            if(!fs.existsSync(RES)){console.log('Projet Android introuvable : rien à faire');process.exit(0)}
+            const D={mdpi:[48,108],hdpi:[72,162],xhdpi:[96,216],xxhdpi:[144,324],xxxhdpi:[192,432]};
+            let icons=0;
+            for(const [d,[s,f]] of Object.entries(D)){
+              const dir=path.join(RES,'mipmap-'+d);if(!fs.existsSync(dir))continue;
+              fs.writeFileSync(path.join(dir,'ic_launcher.png'),png(sq,s));
+              fs.writeFileSync(path.join(dir,'ic_launcher_round.png'),png(round,s));
+              fs.writeFileSync(path.join(dir,'ic_launcher_foreground.png'),png(fg,f));icons++}
+            const bg=path.join(RES,'values/ic_launcher_background.xml');
+            if(fs.existsSync(bg))fs.writeFileSync(bg,fs.readFileSync(bg,'utf8').replace(/#[0-9A-Fa-f]{6}/,BG));
+            let n=0;
+            for(const dir of fs.readdirSync(RES)){
+              if(!/^drawable/.test(dir))continue;const f=path.join(RES,dir,'splash.png');if(!fs.existsSync(f))continue;
+              const b=fs.readFileSync(f),w=b.readUInt32BE(16),h=b.readUInt32BE(20);
+              if(!(w>0&&h>0&&w<5000&&h<5000))continue;
+              fs.writeFileSync(f,new Resvg(splash(w,h)).render().asPng());n++}
+            console.log('Android : '+icons+' séries d\'icônes et '+n+' écrans de démarrage remplacés');
+          }else{console.log('usage : node brand.js android|windows')}
+          BRANDJS
+          npm install --prefix brandtool --no-save --no-package-lock --legacy-peer-deps @resvg/resvg-js
+          node brand.js windows
       - name: Construire le logiciel Windows
         run: npx electron-builder --win nsis portable --publish never
       - uses: actions/upload-artifact@v4
@@ -249,7 +335,7 @@ jobs:
 
   release:
     needs: [android, windows]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/download-artifact@v4
@@ -271,7 +357,7 @@ jobs:
 
   web:
     # Version web installable (iPhone, ordinateur, Android sans fichier). Si les « Pages » GitHub ne sont pas activées, ce travail échoue sans gêner le reste.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     if: github.ref == 'refs/heads/main'
     permissions:
@@ -311,7 +397,12 @@ jobs:
             "icons": [
               { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
               { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
-            ]
+            ],
+              "shortcuts": [
+                { "name": "Labo d'électronique", "short_name": "Labo", "url": "./#labo", "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+                { "name": "Mes cours", "short_name": "Cours", "url": "./#cours", "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+                { "name": "Assistant IA", "short_name": "Assistant", "url": "./#assistant", "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }] }
+              ]
           }
           MANIFEST
           cat > _site/sw.js <<'SWJS'
